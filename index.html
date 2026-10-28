@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunrange — PV forecast with calibrated ranges</title>
+<meta name="description" content="3-day solar PV forecast with P10/P50/P90 ranges, checked against what actually happened and calibrated to your own inverter data.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23141414'/%3E%3Crect x='3' y='9' width='10' height='2' fill='%23e8a317'/%3E%3Crect x='5' y='6' width='6' height='2' fill='%23e8a317'/%3E%3Crect x='7' y='3' width='2' height='2' fill='%23e8a317'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f2f2ee;--panel:#fff;--ink:#141414;--mute:#5e5e58;--faint:#9a9a92;--line:#dcdcd4;--line2:#c7c7bd;--amb:#e8a317;--amb2:#c2410c;--ok:#2f7d32;--bad:#b42318;--warn:#a15c07;color-scheme:light}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 'IBM Plex Sans',system-ui,sans-serif}
+button,input,select{font:inherit;color:inherit}
+a{color:inherit}
+.mono,.num{font-family:'IBM Plex Mono',monospace}
+.num{font-variant-numeric:tabular-nums}
+.bar{display:flex;align-items:center;gap:18px;height:46px;padding:0 18px;background:#141414;color:#eee;font-size:13px}
+.logo{display:flex;align-items:center;gap:9px;font:600 15px 'IBM Plex Mono';letter-spacing:.04em;text-transform:uppercase;text-decoration:none;color:#fff}
+.logo svg{width:18px;height:18px}
+.bar .tag{color:#9a9a92}
+.bar .sp{flex:1}
+.bar a.l{color:#cfcfc8;text-decoration:none}
+.bar a.l:hover{color:var(--amb)}
+.layout{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:calc(100vh - 46px)}
+@media (max-width:960px){.layout{grid-template-columns:1fr}}
+.side{background:var(--panel);border-right:1px solid var(--line);padding:4px 0 24px}
+@media (max-width:960px){.side{border-right:0;border-bottom:1px solid var(--line)}}
+.sec{padding:14px 16px;border-bottom:1px solid var(--line)}
+.sec:last-child{border-bottom:0}
+.h{font:600 11px 'IBM Plex Mono';letter-spacing:.1em;text-transform:uppercase;color:var(--mute);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline}
+.h b{font-weight:500;color:var(--ink);letter-spacing:0;text-transform:none}
+.search{position:relative}
+.in,select.in{width:100%;border:1px solid var(--line2);border-radius:3px;padding:7px 9px;background:#fff;outline:0}
+.in:focus{border-color:var(--ink)}
+.results{position:absolute;z-index:1000;left:0;right:0;top:calc(100% + 2px);background:#fff;border:1px solid var(--ink);max-height:240px;overflow:auto}
+.results button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:7px 9px;cursor:pointer}
+.results button:hover,.results button.on{background:#fbf3df}
+.results small{color:var(--mute)}
+#map{height:170px;margin-top:8px;border:1px solid var(--line2);z-index:0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--mute)}
+.linkbtn{border:0;background:none;padding:0;cursor:pointer;color:var(--amb2);font-weight:500;font-size:12.5px;text-decoration:underline;text-underline-offset:2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fld label{display:block;font-size:12px;color:var(--mute);margin-bottom:3px}
+.fld .unit{position:relative}
+.fld .unit span{position:absolute;right:8px;top:8px;font:12px 'IBM Plex Mono';color:var(--faint);pointer-events:none}
+.compass{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line2);border-radius:3px;overflow:hidden}
+.compass button{border:0;border-right:1px solid var(--line2);background:#fff;padding:6px 0;cursor:pointer;font:500 12px 'IBM Plex Mono'}
+.compass button:last-child{border-right:0}
+.compass button.on{background:var(--ink);color:#fff}
+.hint{font-size:12px;color:var(--mute);margin-top:6px;line-height:1.45}
+.drop{border:1px dashed var(--line2);border-radius:3px;padding:14px;text-align:center;font-size:13px;color:var(--mute);cursor:pointer;background:#fafaf7}
+.drop:hover,.drop.over{border-color:var(--ink);color:var(--ink)}
+.drop b{color:var(--ink)}
+.map{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.map .full{grid-column:1/-1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--ink);background:#fff;border-radius:3px;padding:7px 12px;cursor:pointer;font-weight:500;font-size:13px}
+.btn.dark{background:var(--ink);color:#fff}
+.btn:disabled{opacity:.4;cursor:default}
+.okline{margin-top:10px;font-size:12.5px;border-left:3px solid var(--ok);padding:6px 9px;background:#f3f8f2}
+.errline{margin-top:10px;font-size:12.5px;border-left:3px solid var(--bad);padding:6px 9px;background:#fdf3f2;color:var(--bad)}
+.main{padding:18px clamp(14px,2.4vw,28px) 40px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:10px}
+.head h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.head .meta{font:12px 'IBM Plex Mono';color:var(--mute)}
+.badge{display:inline-block;font:600 10.5px 'IBM Plex Mono';letter-spacing:.06em;text-transform:uppercase;padding:3px 7px;border:1px solid currentColor;border-radius:2px}
+.badge.w{color:var(--mute)}
+.badge.p{color:var(--ok);background:#f3f8f2}
+.status{font-size:13px;color:var(--mute);display:flex;gap:8px;align-items:center}
+.spin{width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--ink);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pnl{background:var(--panel);border:1px solid var(--line)}
+.pnl>.ph{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line)}
+.pnl>.ph h2{margin:0;font:600 11px 'IBM Plex Mono';letter-spacing:.1em;text-transform:uppercase}
+.pnl>.ph span{font-size:12px;color:var(--mute)}
+.pnl>.pb{padding:12px 14px}
+table.t{width:100%;border-collapse:collapse;font-size:13.5px}
+.t th{text-align:right;font:500 11px 'IBM Plex Mono';letter-spacing:.06em;text-transform:uppercase;color:var(--mute);padding:6px 10px;border-bottom:1px solid var(--line)}
+.t th:first-child,.t td:first-child{text-align:left}
+.t td{text-align:right;padding:9px 10px;border-bottom:1px solid var(--line);font-family:'IBM Plex Mono';font-variant-numeric:tabular-nums}
+.t tr:last-child td{border-bottom:0}
+.t td.day{font-family:'IBM Plex Sans';font-weight:600}
+.t td.day small{display:block;font-weight:400;color:var(--mute);font-size:12px}
+.t td.p50{font-size:18px;font-weight:600}
+.t td.sky{font-family:'IBM Plex Sans';color:var(--mute);font-size:12.5px}
+.rb{position:relative;height:6px;background:#eeeee8;min-width:90px}
+.rb i{position:absolute;top:0;bottom:0;background:var(--amb)}
+.rb b{position:absolute;top:-3px;width:2px;height:12px;background:var(--ink)}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto}
+.tip{position:absolute;pointer-events:none;background:#141414;color:#fff;padding:6px 8px;font:12px/1.45 'IBM Plex Mono';white-space:nowrap;transform:translate(-50%,-112%);opacity:0}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mute);padding:0 14px 10px}
+.legend i{display:inline-block;width:12px;height:8px;margin-right:6px}
+.wins{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));border-top:0}
+.wins div{padding:10px 14px;border-right:1px solid var(--line)}
+.wins div:last-child{border-right:0}
+.wins .d{font:500 11px 'IBM Plex Mono';letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.wins .w{font-size:16px;font-weight:600;margin:2px 0}
+.wins .s{font-size:12.5px;color:var(--mute)}
+.verdict{border-left:3px solid var(--mute);padding:8px 12px;background:#fafaf7;font-size:13.5px;line-height:1.55;margin-bottom:12px}
+.verdict.good{border-color:var(--ok);background:#f3f8f2}
+.verdict.meh{border-color:var(--warn);background:#fbf6ea}
+.verdict.bad{border-color:var(--bad);background:#fdf3f2}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:12px}
+.figs h3{margin:0 0 2px;font-size:13px;font-weight:600}
+.figs p{margin:0 0 6px;font-size:12px;color:var(--mute);line-height:1.45}
+.figs svg{width:100%;height:auto;display:block;border:1px solid var(--line)}
+.insight{margin-top:12px;font-size:13px;padding:8px 12px;border:1px solid var(--line);background:#fffaf0}
+details.method{background:var(--panel);border:1px solid var(--line)}
+details.method summary{cursor:pointer;padding:9px 14px;font:600 11px 'IBM Plex Mono';letter-spacing:.1em;text-transform:uppercase}
+details.method .pb{padding:0 14px 12px;font-size:13px;color:var(--mute);line-height:1.6}
+details.method ol{margin:0;padding-left:18px}
+details.method li{margin-bottom:6px}
+.foot{font-size:12px;color:var(--mute)}
+.foot a{color:var(--mute)}
+.leaflet-container{font:inherit}
+@media (max-width:560px){.t th:nth-child(n+5),.t td:nth-child(n+5){display:none}.t td,.t th{padding:8px 6px}.wins div{border-right:0;border-bottom:1px solid var(--line)}.bar .tag{display:none}.main{padding:14px 12px 30px}}
+</style>
+</head>
+<body>
+<header class="bar">
+  <a class="logo" href="./"><svg viewBox="0 0 16 16"><rect x="3" y="9" width="10" height="2" fill="#e8a317"/><rect x="5" y="6" width="6" height="2" fill="#e8a317"/><rect x="7" y="3" width="2" height="2" fill="#e8a317"/><rect x="1" y="12" width="14" height="1" fill="#777"/></svg>Sunrange</a>
+  <span class="tag">PV forecast · calibrated ranges</span>
+  <span class="sp"></span>
+  <a class="l" href="#method">Method</a>
+  <a class="l" href="https://unnatibshah.github.io/">Unnati Shah</a>
+</header>
+
+<div class="layout">
+  <aside class="side">
+    <section class="sec">
+      <div class="h">Location</div>
+      <div class="search"><input class="in" id="q" placeholder="Search city or address" autocomplete="off" aria-label="Search location"><div class="results" id="results" hidden></div></div>
+      <div id="map" aria-label="Map: click to choose a location"></div>
+      <div class="row"><span id="coords" class="mono"></span><button class="linkbtn" id="locate">Use my location</button></div>
+    </section>
+
+    <section class="sec">
+      <div class="h">System</div>
+      <div class="grid2">
+        <div class="fld"><label for="kwp">Size</label><div class="unit"><input class="in num" id="kwp" type="number" min="0.5" max="1000" step="0.1"><span>kWp</span></div></div>
+        <div class="fld"><label for="tilt">Tilt</label><div class="unit"><input class="in num" id="tilt" type="number" min="0" max="90" step="1"><span>deg</span></div></div>
+        <div class="fld"><label for="az">Azimuth</label><div class="unit"><input class="in num" id="az" type="number" min="0" max="359" step="1"><span>deg</span></div></div>
+        <div class="fld"><label for="loss">Losses</label><div class="unit"><input class="in num" id="loss" type="number" min="0" max="50" step="1"><span>%</span></div></div>
+      </div>
+      <div class="compass" id="compass" style="margin-top:10px"><button data-az="0">N</button><button data-az="90">E</button><button data-az="180">S</button><button data-az="270">W</button></div>
+      <div class="hint" id="sysHint">Azimuth: 180 = facing south. Losses cover inverter, wiring and mismatch.</div>
+    </section>
+
+    <section class="sec">
+      <div class="h">Your production data <b id="prodState">optional</b></div>
+      <div class="drop" id="drop" tabindex="0" role="button">Drop an inverter or meter <b>CSV</b> export here, or click to choose</div>
+      <input type="file" id="file" accept=".csv,.txt,text/csv" hidden>
+      <div class="hint">Hourly or finer, from the last 90 days. Sunrange learns your roof's shading, soiling and clipping, and how far to trust forecasts there. The file never leaves this browser.</div>
+      <div class="row"><button class="linkbtn" id="simulate">Try a simulated export</button><button class="linkbtn" id="dlSample" hidden>Download it</button></div>
+      <div id="mapping" hidden>
+        <div class="map">
+          <div class="fld"><label for="timeCol">Time column</label><select class="in" id="timeCol"></select></div>
+          <div class="fld"><label for="valCol">Value column</label><select class="in" id="valCol"></select></div>
+          <div class="fld"><label for="unitSel">Value is</label><select class="in" id="unitSel"><option value="kWh">energy, kWh</option><option value="Wh">energy, Wh</option><option value="kW">power, kW</option><option value="W">power, W</option></select></div>
+          <div class="fld"><label for="tzSel">Times are</label><select class="in" id="tzSel"><option value="local">local time</option><option value="UTC">UTC</option></select></div>
+          <div class="fld full"><label for="stampSel">Each timestamp marks</label><select class="in" id="stampSel"><option value="start">the start of its interval</option><option value="end">the end of its interval</option></select></div>
+        </div>
+        <div class="row"><span id="preview" class="mono"></span><button class="btn dark" id="apply">Calibrate</button></div>
+      </div>
+      <div id="prodMsg"></div>
+    </section>
+
+    <section class="sec">
+      <div class="h">Export</div>
+      <button class="btn" id="export" disabled>Download forecast CSV</button>
+      <div class="hint">Hourly P10–P90 in kW for the next 3 days, local time.</div>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <div><h1 id="place">—</h1><div class="meta" id="meta"></div></div>
+      <div><span class="badge w" id="calBadge">Calibrated to weather</span></div>
+    </div>
+    <div class="status" id="status"><span class="spin"></span><span>Loading…</span></div>
+
+    <section class="pnl" id="daysPnl" hidden>
+      <div class="ph"><h2>Next 3 days</h2><span>Energy in kWh. 80% of days should land between P10 and P90.</span></div>
+      <table class="t"><thead><tr><th>Day</th><th>P10</th><th>P50</th><th>P90</th><th style="width:26%">Range</th><th>Sky</th></tr></thead><tbody id="days"></tbody></table>
+    </section>
+
+    <section class="pnl" id="chartPnl" hidden>
+      <div class="ph"><h2>Hourly power</h2><span id="chartNote"></span></div>
+      <div class="chart" id="chart"><svg id="svg"></svg><div class="tip" id="tip"></div></div>
+      <div class="legend"><span><i style="background:#f6dc9c"></i>P10–P90</span><span><i style="background:#e8a317"></i>P25–P75</span><span><i style="background:#141414;height:2px"></i>P50</span><span id="measLegend" hidden><i style="background:#2f7d32;height:2px"></i>your measured output</span></div>
+    </section>
+
+    <section class="pnl" id="winPnl" hidden>
+      <div class="ph"><h2>Best 3-hour window for heavy loads</h2><span>Chosen for the highest P10: sun you can count on</span></div>
+      <div class="wins" id="wins"></div>
+    </section>
+
+    <section class="pnl" id="trustPnl" hidden>
+      <div class="ph"><h2>Forecast reliability here</h2><span id="trustNote"></span></div>
+      <div class="pb">
+        <div class="verdict" id="verdict"></div>
+        <table class="t" id="metrics"></table>
+        <div class="insight" id="insight" hidden></div>
+        <div class="figs">
+          <div><h3>Reliability diagram</h3><p>Promised probability vs how often it happened. On the diagonal = the ranges mean what they say.</p><svg id="rel" viewBox="0 0 300 250"></svg></div>
+          <div><h3>Where outcomes fell</h3><p>Position of the real value within the forecast distribution. Flat is ideal; U-shape = too narrow, hump = too wide, slope = biased.</p><svg id="pit" viewBox="0 0 300 250"></svg></div>
+          <div id="recFig" hidden><h3>Days of your data needed</h3><p>Calibration error on the newest weeks when Sunrange is given only your most recent N days.</p><svg id="rec" viewBox="0 0 300 250"></svg></div>
+        </div>
+      </div>
+    </section>
+
+    <details class="method" id="method">
+      <summary>Method</summary>
+      <div class="pb"><ol>
+        <li><b>Point forecast.</b> Mean of three NWP models (ECMWF IFS, NOAA GFS, DWD ICON) via Open-Meteo, converted to AC power for your system: NOAA solar position at the interval midpoint, Erbs decomposition, isotropic-sky transposition, NOCT temperature derate, losses.</li>
+        <li><b>Generic range.</b> 19 quantiles from an error model in clear-sky-index space, per sky state, pooled over 16 reference cities on six continents: what a forecaster knows before it has seen your location.</li>
+        <li><b>Reliability check.</b> Past day-ahead forecasts at this location are scored against what happened: ERA5 reanalysis by default, or your own measured output if you import it. Coverage is always reported with interval width, with Wilson 95% intervals.</li>
+        <li><b>Local recalibration.</b> Each quantile is shifted separately per sky state (fixes bias, width and skew), recency-weighted, at a strength picked by a backtest on older weeks only. The newest weeks are used purely to judge it. No model retraining.</li>
+        <li><b>Daily totals</b> add hourly quantiles, assuming a cloudy day is cloudy all day. Truth from ERA5 is a reanalysis, not a sensor on your roof, which is why importing your own data matters.</li>
+      </ol></div>
+    </details>
+    <div class="foot">Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF, NOAA GFS, DWD ICON, ERA5). Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Built by <a href="https://unnatibshah.github.io/">Unnati Shah</a>.</div>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
