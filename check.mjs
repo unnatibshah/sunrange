@@ -46,6 +46,20 @@ assert.equal(P.zonedToUtc([2026, 3, 8, 3, 0], 'America/New_York'), Date.UTC(2026
 assert.throws(() => P.toHourly(P.sniff('day,kwh\n2026-07-01 00:00,10\n2026-07-02 00:00,12\n'.repeat(13)), { timeCol: 0, valueCol: 1, unit: 'kWh', tz: 'UTC', stampAt: 'start' }), /hourly or finer/);
 console.log('production importer ok');
 
+// Planning: sizing to whole panels, roof cap, month-by-month self-use vs export, payback.
+const Pl = await import('./plan.js');
+const flat = [{ year: 2024, monthly: Array(12).fill(125), annual: 1500 }];                    // 1500 kWh per kWp per year
+const base = { monthlyUse: 250, cover: 1, tariff: 10, exportRate: 4, costPerKwp: 50000, subsidy: 0, panel: 'mono', roofM2: 0 };
+let pl = Pl.plan(flat, base);
+assert.equal(pl.panels, Math.round((250 * 365.25 / 30.4375) / 1500 * 1000 / 430), 'size to the use, rounded to whole panels');
+assert.ok(Math.abs(pl.median.covered - pl.kwp * 1500 / (250 * 12)) < 0.02 || pl.median.covered <= 1, 'coverage follows size');
+pl = Pl.plan(flat, { ...base, roofM2: 5 });
+assert.ok(pl.capped && pl.roofM2 <= 5 * 1.25, 'roof space caps the size');
+pl = Pl.plan(flat, { ...base, kwp: 4, monthlyUse: 1e6 });                                            // everything self-used
+assert.ok(Math.abs(pl.median.payback - pl.cost / pl.median.savings) < 0.2, 'payback ≈ cost / yearly savings when nothing is exported');
+assert.ok(Pl.plan(flat, { ...base, kwp: 6, exportRate: 0 }).median.savings < Pl.plan(flat, { ...base, kwp: 6 }).median.savings, 'exports are worth something');
+console.log('planner ok');
+
 if (!process.argv.includes('--offline')) {
   // A simulated roof (shading after 3 pm, soiling, clipping) calibrated from its own output.
   const { pastForecastsPV, era5 } = await import('./data.js'), { simulateRoof } = await import('./simulate.js');

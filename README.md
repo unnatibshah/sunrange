@@ -11,7 +11,8 @@ Pick a place and a PV system. Sunrange:
 3. **Checks it at the chosen location**: ~7 weeks of past day-ahead (and two-day-ahead) forecasts from the Open-Meteo previous-runs archive are scored against ERA5. Reliability diagram, PIT histogram, calibration error, and 80% interval coverage *always next to its width*, with Wilson intervals.
 4. **Recalibrates locally** with per-quantile offsets per sky bin (shape-capable: fixes bias, width and skew), recency-weighted, at a strength chosen by a backtest *inside* the fitting window. The newest weeks are only used to judge the result, never to fit or choose. Zero model fits.
 5. **Calibrates to your own panels** (the main point): import an inverter or meter CSV (hourly or finer, last 90 days; any common date format, W/kW/Wh/kWh, local time or UTC). The same per-quantile recalibration then runs against your measured output instead of ERA5, so it learns your roof's shading, soiling and clipping. It reports how much of the modelled output your system really makes on clear hours, and a **days-of-data curve**: how good the ranges get with your most recent N days. No data? "Try a simulated export" builds one from what the weather actually did, with afternoon shade, dust and a clipping inverter.
-6. **Plans and exports**: daily kWh ranges, the most *reliable* 3-hour window each day for heavy loads (maximises P10, not P50), and a CSV of hourly P10/P25/P50/P75/P90.
+6. **Plans an installation**: enter your monthly use, electricity and export prices, install cost, subsidy, panel type and roof space. Sunrange runs the same PV model over five full years of hourly weather at the location and returns the size (kWp), panel count, roof area, cost, share of your use covered, yearly savings, payback and 25-year net, each as a range over real weather years, plus a month-by-month chart and a cash-flow chart. A slider tries other sizes, and "Use in forecast" carries the size over. This extends the sizing and payback approach of my BE project, [Powered by Sun](https://github.com/unnatibshah/Powered-by-Sun), with weather ranges instead of one long-term average.
+7. **Plans and exports**: daily kWh ranges, the most *reliable* 3-hour window each day for heavy loads (maximises P10, not P50), and a CSV of hourly P10/P25/P50/P75/P90.
 
 Everything runs in the browser; Open-Meteo needs no key.
 
@@ -32,6 +33,7 @@ node build-generic.mjs           # rebuild generic.json from the 16 reference ci
 | `app.js`, `index.html` | the UI (Leaflet map, hand-drawn SVG charts) |
 | `generic.json` | pooled error model, lead 1 and lead 2, built by `build-generic.mjs` |
 | `production.js` | inverter/meter CSV importer: delimiter, header, date formats, units, time zones, interval start/end, resampling to hourly |
+| `plan.js` | sizing, roof area, cost, month-by-month self-use vs export, payback and 25-year cash flow over several weather years |
 | `simulate.js` | a simulated inverter export (shade, soiling, clipping, noise) built from ERA5 |
 | `check.mjs` | geometry and PV sanity checks, a synthetic transfer test, importer tests, a simulated-roof calibration test, and a live held-out-city test |
 

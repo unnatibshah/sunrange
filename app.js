@@ -2,6 +2,7 @@ import * as M from './model.js';
 import { history as pastForecasts, forecast, placeInfo, geocode, pastForecastsPV, era5 } from './data.js';
 import { sniff, toHourly, guessUnit, toCSV } from './production.js';
 import { simulateRoof } from './simulate.js';
+import * as Plan from './plan.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
@@ -59,7 +60,7 @@ function syncSystem() {
   return s;
 }
 let st;
-const onSys = () => { clearTimeout(st); st = setTimeout(() => { if (state.prod) calibratePV(); render(); }, 250); };
+const onSys = () => { clearTimeout(st); st = setTimeout(async () => { if (state.prod) await calibratePV(); render(); planYields = null; renderPlan(); }, 250); };
 $('kwp').oninput = e => { if (+e.target.value > 0) { state.sys.kwp = +e.target.value; onSys(); } };
 $('tilt').oninput = e => { if (e.target.value !== '') { state.sys.tilt = Math.max(0, Math.min(90, +e.target.value)); onSys(); } };
 $('az').oninput = e => { if (e.target.value !== '') { state.sys.azimuth = ((+e.target.value % 360) + 360) % 360; onSys(); } };
@@ -87,7 +88,7 @@ async function load() {
       state.cal[lead] = M.recalibrate(rows, g);
     }
     if (state.prod) await calibratePV();
-    status(''); render();
+    status(''); render(); planLocation();
   } catch (e) { if (token === state.token) status(`Couldn't load this location: ${e.message}`, true); }
 }
 
@@ -203,7 +204,11 @@ function hourly(sys) {
 // ---------- render ----------
 function render() {
   const sys = syncSystem();
-  history.replaceState(null, '', `?lat=${state.lat}&lon=${state.lon}&name=${encodeURIComponent(state.name)}&kwp=${sys.kwp}` + (state.sys.tilt != null ? `&tilt=${sys.tilt}` : '') + (state.sys.azimuth != null ? `&az=${sys.azimuth}` : ''));
+  const q = new URLSearchParams({ lat: state.lat, lon: state.lon, name: state.name, kwp: sys.kwp });
+  if (state.sys.tilt != null) q.set('tilt', sys.tilt);
+  if (state.sys.azimuth != null) q.set('az', sys.azimuth);
+  if (new URLSearchParams(location.search).get('view') === 'plan') q.set('view', 'plan');
+  history.replaceState(null, '', '?' + q);
   if (!state.fc || !state.cal) return;
   const H = hourly(sys);
   $('meta').textContent = `${f(state.lat, 3)}, ${f(state.lon, 3)} · ${state.tz} · ${sys.kwp} kWp, ${sys.tilt}° tilt, ${sys.azimuth}° azimuth`;
@@ -355,3 +360,96 @@ $('export').onclick = () => {
 
 syncSystem();
 load();
+
+// ---------- plan an installation ----------
+let view = url.get('view') === 'plan' ? 'plan' : 'forecast', planEra = null, planYields = null, planKey = '', curTouched = false, sizeOverride = null;
+const P$ = id => $(id);
+function setView(v) {
+  view = v;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  $('forecastView').hidden = v !== 'forecast'; $('planView').hidden = v !== 'plan';
+  $('calBadge').style.visibility = v === 'forecast' ? 'visible' : 'hidden';
+  const u = new URL(location); v === 'plan' ? u.searchParams.set('view', 'plan') : u.searchParams.delete('view'); history.replaceState(null, '', u);
+  if (v === 'plan') renderPlan();
+}
+document.querySelector('.tabs').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };
+
+function setCurrency(code) {
+  const c = Plan.CURRENCIES[code]; P$('pCur').value = code;
+  P$('pTariff').value = c.tariff; P$('pExport').value = c.exportRate; P$('pCost').value = c.costPerKwp;
+  document.querySelectorAll('.cu').forEach(el => el.textContent = el.textContent.replace(/^[^/]*/, c.symbol));
+}
+P$('pCur').onchange = () => { curTouched = true; setCurrency(P$('pCur').value); renderPlan(); };
+
+async function planLocation() {
+  if (!curTouched) setCurrency(Plan.currencyFor(state.tz));
+  const key = `${state.lat},${state.lon}`;
+  if (planKey === key && planEra) return renderPlan();
+  planKey = key; planEra = null; planYields = null; sizeOverride = null;
+  try { const year = new Date().getUTCFullYear() - 1; planEra = await era5(state.lat, state.lon, `${year - 4}-01-01`, `${year}-12-31`); }
+  catch (e) { P$('planOut').hidden = false; P$('kpis').innerHTML = `<div class="kpi">Couldn't load past weather: ${esc(e.message)}</div>`; return; }
+  if (planKey === key) renderPlan();
+}
+
+function planOpts() {
+  const roof = +P$('pRoof').value || 0;
+  return { monthlyUse: Math.max(1, +P$('pUse').value || 0), cover: Math.max(0.1, (+P$('pCover').value || 100) / 100), tariff: +P$('pTariff').value || 0,
+    exportRate: +P$('pExport').value || 0, costPerKwp: +P$('pCost').value || 0, subsidy: Math.min(0.9, Math.max(0, (+P$('pSub').value || 0) / 100)),
+    panel: P$('pPanel').value, roofM2: P$('pRoofU').value === 'ft2' ? roof * 0.092903 : roof, kwp: sizeOverride ?? undefined };
+}
+
+const money = (v, sym) => `${sym}${Math.round(v).toLocaleString('en-US')}`;
+function renderPlan() {
+  if (view !== 'plan' || !planEra) return;
+  const sys = sysNow();
+  planYields ??= Plan.specificYield(planEra, state.lat, state.lon, sys);
+  let r; try { r = Plan.plan(planYields, planOpts()); } catch (e) { P$('planOut').hidden = false; P$('kpis').innerHTML = `<div class="kpi">${esc(e.message)}</div>`; return; }
+  const sym = Plan.CURRENCIES[P$('pCur').value].symbol, ys = planYields.map(y => y.year), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pb = s => s.payback == null ? '> 25 yrs' : `${f(s.payback, 1)} yrs`;
+  const kpi = (k, v, rng) => `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="r">${rng || '&nbsp;'}</div></div>`;
+  P$('planOut').hidden = P$('monthPnl').hidden = P$('cashPnl').hidden = false;
+  P$('kpis').innerHTML = kpi('System size', `${f(r.kwp, 2)} kWp`, sizeOverride ? `recommended ${f(r.recommendedKwp, 2)} kWp` : r.capped ? 'limited by roof space' : 'to cover your target')
+    + kpi('Panels', `${r.panels} × ${r.panel.watts} W`, r.panel.label)
+    + kpi('Roof area', `${f(r.roofM2, 1)} m²`, `${Math.round(r.roofM2 / 0.092903)} ft²`)
+    + kpi('Cost', money(r.cost, sym), +P$('pSub').value ? `after ${P$('pSub').value}% subsidy` : 'before subsidies')
+    + kpi('Yearly output', `${Math.round(r.median.production).toLocaleString('en-US')} kWh`, `${Math.round(r.worst.production).toLocaleString('en-US')}–${Math.round(r.best.production).toLocaleString('en-US')} across ${y0}–${y1}`)
+    + kpi('Use covered', pct(r.median.covered), `${pct(r.worst.covered)}–${pct(r.best.covered)}`)
+    + kpi('Yearly savings', money(r.median.savings, sym), `${money(r.worst.savings, sym)}–${money(r.best.savings, sym)}`)
+    + kpi('Payback', pb(r.median), `${pb(r.best)} to ${pb(r.worst)}`)
+    + kpi('25-year net', money(r.median.flow.at(-1), sym), `${money(r.worst.flow.at(-1), sym)}–${money(r.best.flow.at(-1), sym)}`);
+  P$('planNote').textContent = `${sys.tilt}° tilt, ${sys.azimuth}° azimuth, ${Math.round(sys.losses * 100)}% losses (change in System)`;
+  const slider = P$('pSize'); slider.max = Math.max(20, Math.ceil(r.recommendedKwp * 2)); if (document.activeElement !== slider) slider.value = r.kwp; P$('pSizeV').textContent = `${f(r.kwp, 2)} kWp`;
+  const exp = r.median.exported / r.median.production;
+  P$('planAssume').innerHTML = `Each kWp here made <b>${Math.round(Math.min(...planYields.map(y => y.annual)))}–${Math.round(Math.max(...planYields.map(y => y.annual)))} kWh</b> a year over ${y0}–${y1}, with this tilt and direction. `
+    + `In a median year about <b>${pct(exp)}</b> of the output is exported at ${sym}${P$('pExport').value}/kWh, the rest replaces grid power at ${sym}${P$('pTariff').value}/kWh. `
+    + (exp > 0.3 ? 'With that much export, a smaller system or a battery may pay back faster: try the slider. ' : '')
+    + 'Excludes batteries, maintenance, financing and price changes.';
+  drawMonths(r); drawCash(r, sym);
+}
+['pUse', 'pCover', 'pTariff', 'pExport', 'pCost', 'pSub', 'pRoof'].forEach(id => P$(id).addEventListener('input', () => { sizeOverride = null; renderPlan(); }));
+['pPanel', 'pRoofU'].forEach(id => P$(id).addEventListener('change', () => { sizeOverride = null; renderPlan(); }));
+P$('pSize').oninput = e => { sizeOverride = +e.target.value; renderPlan(); };
+P$('pReset').onclick = () => { sizeOverride = null; renderPlan(); };
+P$('pUseIt').onclick = () => { const r = Plan.plan(planYields, planOpts()); state.sys.kwp = +r.kwp.toFixed(2); syncSystem(); setView('forecast'); if (state.prod) calibratePV().then(render); else render(); };
+
+function drawMonths(r) {
+  const W = 960, H = 260, P = { l: 52, r: 10, t: 14, b: 30 }, mx = Math.max(...r.monthly.map(m => Math.max(m.max, m.use))) * 1.1, cw = (W - P.l - P.r) / 12;
+  const y = v => H - P.b - v / mx * (H - P.t - P.b), names = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+  const grid = [0, .5, 1].map(fr => fr * mx).map(v => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" stroke="#e4e4dc"/><text x="${P.l - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#9a9a92" font-family="IBM Plex Mono">${Math.round(v)}</text>`).join('');
+  const bars = r.monthly.map((m, i) => { const cx = P.l + cw * (i + .5); return `<rect x="${cx - cw * .3}" y="${y(m.med)}" width="${cw * .6}" height="${H - P.b - y(m.med)}" fill="#e8a317"/><line x1="${cx}" x2="${cx}" y1="${y(m.max)}" y2="${y(m.min)}" stroke="#141414"/><line x1="${cx - 5}" x2="${cx + 5}" y1="${y(m.max)}" y2="${y(m.max)}" stroke="#141414"/><line x1="${cx - 5}" x2="${cx + 5}" y1="${y(m.min)}" y2="${y(m.min)}" stroke="#141414"/><text x="${cx}" y="${H - P.b + 16}" text-anchor="middle" font-size="11" fill="#5e5e58" font-family="IBM Plex Mono">${names[i]}</text>`; }).join('');
+  const use = `<polyline points="${r.monthly.map((m, i) => `${P.l + cw * (i + .5)},${y(m.use)}`).join(' ')}" fill="none" stroke="#c2410c" stroke-width="2"/>`;
+  P$('monthSvg').setAttribute('viewBox', `0 0 ${W} ${H}`);
+  P$('monthSvg').innerHTML = `${grid}${bars}${use}<text x="${P.l}" y="${P.t - 2}" font-size="10.5" fill="#9a9a92" font-family="IBM Plex Mono">kWh</text>`;
+}
+function drawCash(r, sym) {
+  const W = 960, H = 260, P = { l: 78, r: 34, t: 14, b: 30 }, all = [r.worst, r.median, r.best].flatMap(s => s.flow);
+  const lo = Math.min(...all), hi = Math.max(...all, 0), x = t => P.l + t / Plan.YEARS * (W - P.l - P.r), y = v => H - P.b - (v - lo) / (hi - lo || 1) * (H - P.t - P.b);
+  const line = (s, c, w) => `<polyline points="${s.flow.map((v, t) => `${x(t)},${y(v)}`).join(' ')}" fill="none" stroke="${c}" stroke-width="${w}"/>`;
+  const ticks = [0, 5, 10, 15, 20, 25].map(t => `<text x="${x(t)}" y="${H - P.b + 16}" text-anchor="middle" font-size="11" fill="#5e5e58" font-family="IBM Plex Mono">yr ${t}</text>`).join('');
+  const be = r.median.payback != null ? `<line x1="${x(r.median.payback)}" x2="${x(r.median.payback)}" y1="${P.t}" y2="${H - P.b}" stroke="#141414" stroke-dasharray="3 3"/><text x="${x(r.median.payback) + 5}" y="${P.t + 11}" font-size="11" font-family="IBM Plex Mono" fill="#141414">break-even ${f(r.median.payback, 1)} yrs</text>` : '';
+  P$('cashSvg').setAttribute('viewBox', `0 0 ${W} ${H}`);
+  P$('cashSvg').innerHTML = `<line x1="${P.l}" x2="${W - P.r}" y1="${y(0)}" y2="${y(0)}" stroke="#141414"/>
+    <text x="${P.l - 6}" y="${y(0) + 4}" text-anchor="end" font-size="11" fill="#5e5e58" font-family="IBM Plex Mono">${sym}0</text><text x="${P.l - 6}" y="${y(hi) + 4}" text-anchor="end" font-size="11" fill="#9a9a92" font-family="IBM Plex Mono">${money(hi, sym)}</text><text x="${P.l - 6}" y="${y(lo) + 4}" text-anchor="end" font-size="11" fill="#9a9a92" font-family="IBM Plex Mono">${money(lo, sym)}</text>
+    ${ticks}${line(r.best, '#2f7d32', 1.5)}${line(r.worst, '#b42318', 1.5)}${line(r.median, '#141414', 2.2)}${be}`;
+}
+setView(view);

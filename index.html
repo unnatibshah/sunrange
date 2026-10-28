@@ -117,6 +117,19 @@ details.method ol{margin:0;padding-left:18px}
 details.method li{margin-bottom:6px}
 .foot{font-size:12px;color:var(--mute)}
 .foot a{color:var(--mute)}
+.tabs{display:flex;gap:0;border:1px solid var(--ink);border-radius:3px;overflow:hidden}
+.tabs button{border:0;border-right:1px solid var(--ink);background:#fff;padding:6px 14px;cursor:pointer;font:600 12px 'IBM Plex Mono';letter-spacing:.04em;text-transform:uppercase}
+.tabs button:last-child{border-right:0}
+.tabs button.on{background:var(--ink);color:#fff}
+.pform{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px 14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));border-top:1px solid var(--line)}
+.kpi{padding:12px 14px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.kpi .k{font:500 11px 'IBM Plex Mono';letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.kpi .v{font:600 22px 'IBM Plex Mono';margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .r{font:12px 'IBM Plex Mono';color:var(--mute)}
+.sizer{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px}
+.sizer input[type=range]{flex:1;min-width:180px;accent-color:#141414}
+.note{font-size:12.5px;color:var(--mute);line-height:1.55;padding:10px 14px;border-top:1px solid var(--line)}
 .leaflet-container{font:inherit}
 @media (max-width:560px){.t th:nth-child(n+5),.t td:nth-child(n+5){display:none}.t td,.t th{padding:8px 6px}.wins div{border-right:0;border-bottom:1px solid var(--line)}.bar .tag{display:none}.main{padding:14px 12px 30px}}
 </style>
@@ -180,10 +193,11 @@ details.method li{margin-bottom:6px}
   <main class="main">
     <div class="head">
       <div><h1 id="place">—</h1><div class="meta" id="meta"></div></div>
-      <div><span class="badge w" id="calBadge">Calibrated to weather</span></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div class="tabs" role="tablist"><button data-view="forecast" class="on" role="tab">Forecast</button><button data-view="plan" role="tab">Plan an installation</button></div><span class="badge w" id="calBadge">Calibrated to weather</span></div>
     </div>
     <div class="status" id="status"><span class="spin"></span><span>Loading…</span></div>
 
+    <div id="forecastView" style="display:flex;flex-direction:column;gap:16px">
     <section class="pnl" id="daysPnl" hidden>
       <div class="ph"><h2>Next 3 days</h2><span>Energy in kWh. 80% of days should land between P10 and P90.</span></div>
       <table class="t"><thead><tr><th>Day</th><th>P10</th><th>P50</th><th>P90</th><th style="width:26%">Range</th><th>Sky</th></tr></thead><tbody id="days"></tbody></table>
@@ -214,6 +228,44 @@ details.method li{margin-bottom:6px}
       </div>
     </section>
 
+    </div>
+
+    <div id="planView" hidden style="display:flex;flex-direction:column;gap:16px">
+      <section class="pnl">
+        <div class="ph"><h2>Your usage and costs</h2><span>Defaults are rough for the local currency: replace them with your bill and installer quotes</span></div>
+        <div class="pb pform">
+          <div class="fld"><label for="pUse">Electricity use</label><div class="unit"><input class="in num" id="pUse" type="number" min="1" step="10" value="300"><span>kWh/mo</span></div></div>
+          <div class="fld"><label for="pCover">Cover</label><div class="unit"><input class="in num" id="pCover" type="number" min="10" max="200" step="5" value="100"><span>% of use</span></div></div>
+          <div class="fld"><label for="pCur">Currency</label><select class="in" id="pCur"><option>INR</option><option>USD</option><option>EUR</option><option>GBP</option></select></div>
+          <div class="fld"><label for="pTariff">Electricity price</label><div class="unit"><input class="in num" id="pTariff" type="number" min="0" step="0.01"><span class="cu">/kWh</span></div></div>
+          <div class="fld"><label for="pExport">Export price</label><div class="unit"><input class="in num" id="pExport" type="number" min="0" step="0.01"><span class="cu">/kWh</span></div></div>
+          <div class="fld"><label for="pCost">Install cost</label><div class="unit"><input class="in num" id="pCost" type="number" min="0" step="50"><span class="cu">/kWp</span></div></div>
+          <div class="fld"><label for="pSub">Subsidy</label><div class="unit"><input class="in num" id="pSub" type="number" min="0" max="90" step="1" value="0"><span>%</span></div></div>
+          <div class="fld"><label for="pPanel">Panel type</label><select class="in" id="pPanel"><option value="mono">Monocrystalline</option><option value="poly">Polycrystalline</option><option value="thin">Thin film</option></select></div>
+          <div class="fld"><label for="pRoof">Roof space (optional)</label><div class="grid2" style="gap:6px"><input class="in num" id="pRoof" type="number" min="0" step="1" placeholder="any"><select class="in" id="pRoofU"><option value="m2">m²</option><option value="ft2">ft²</option></select></div></div>
+        </div>
+      </section>
+
+      <section class="pnl" id="planOut" hidden>
+        <div class="ph"><h2>Recommended system</h2><span id="planNote"></span></div>
+        <div class="kpis" id="kpis"></div>
+        <div class="sizer"><span class="mono" style="font-size:12px;color:var(--mute)">Try another size</span><input type="range" id="pSize" min="0.5" max="20" step="0.1"><b class="mono" id="pSizeV"></b><button class="btn" id="pReset">Reset</button><button class="btn dark" id="pUseIt">Use in forecast</button></div>
+        <div class="note" id="planAssume"></div>
+      </section>
+
+      <section class="pnl" id="monthPnl" hidden>
+        <div class="ph"><h2>Month by month</h2><span>Production range across the weather years vs your use</span></div>
+        <div class="chart"><svg id="monthSvg"></svg></div>
+        <div class="legend"><span><i style="background:#e8a317"></i>median year</span><span><i style="background:#141414;height:2px"></i>worst to best year</span><span><i style="background:#c2410c;height:2px"></i>your use</span></div>
+      </section>
+
+      <section class="pnl" id="cashPnl" hidden>
+        <div class="ph"><h2>25-year cash flow</h2><span>Cumulative savings minus cost, 0.5% panel degradation per year, prices held flat</span></div>
+        <div class="chart"><svg id="cashSvg"></svg></div>
+        <div class="legend"><span><i style="background:#2f7d32;height:2px"></i>best weather year</span><span><i style="background:#141414;height:2px"></i>median</span><span><i style="background:#b42318;height:2px"></i>worst</span></div>
+      </section>
+    </div>
+
     <details class="method" id="method">
       <summary>Method</summary>
       <div class="pb"><ol>
@@ -221,6 +273,7 @@ details.method li{margin-bottom:6px}
         <li><b>Generic range.</b> 19 quantiles from an error model in clear-sky-index space, per sky state, pooled over 16 reference cities on six continents: what a forecaster knows before it has seen your location.</li>
         <li><b>Reliability check.</b> Past day-ahead forecasts at this location are scored against what happened: ERA5 reanalysis by default, or your own measured output if you import it. Coverage is always reported with interval width, with Wilson 95% intervals.</li>
         <li><b>Local recalibration.</b> Each quantile is shifted separately per sky state (fixes bias, width and skew), recency-weighted, at a strength picked by a backtest on older weeks only. The newest weeks are used purely to judge it. No model retraining.</li>
+        <li><b>Planning</b> runs the same PV model over five full years of hourly ERA5 weather at the location (2021–2025) to get kWh per kWp for each year and month. Size = your yearly use × cover ÷ the median year's yield, rounded to whole panels and capped by roof space. Savings value self-consumed energy at your price and the rest at the export price, month by month, so the worst, median and best weather years give a range. The sizing and payback approach comes from my BE project, <a href="https://github.com/unnatibshah/Powered-by-Sun" target="_blank" rel="noopener">Powered by Sun</a>.</li>
         <li><b>Daily totals</b> add hourly quantiles, assuming a cloudy day is cloudy all day. Truth from ERA5 is a reanalysis, not a sensor on your roof, which is why importing your own data matters.</li>
       </ol></div>
     </details>
